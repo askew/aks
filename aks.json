@@ -1,0 +1,265 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "0.1.0.0",
+    "parameters": {
+        "resourceName": {
+            "type": "string",
+            "metadata": {
+                "description": "The name of the Managed Cluster resource."
+            }
+        },
+        "dnsPrefix": {
+            "type": "string",
+            "metadata": {
+                "description": "Optional DNS prefix to use with hosted Kubernetes API server FQDN."
+            }
+        },
+        "agentCount": {
+            "type": "int",
+            "defaultValue": 3,
+            "metadata": {
+                "description": "The number of agent nodes for the cluster."
+            },
+            "minValue": 1,
+            "maxValue": 50
+        },
+        "agentVMSize": {
+            "type": "string",
+            "defaultValue": "Standard_E4s_v3",
+            "metadata": {
+                "description": "The size of the Virtual Machine."
+            }
+        },
+        "servicePrincipalClientId": {
+            "metadata": {
+                "description": "The Service Principal Client ID"
+            },
+            "type": "securestring"
+        },
+        "servicePrincipalClientSecret": {
+            "metadata": {
+                "description": "The Service Principal Client Secret."
+            },
+            "type": "securestring"
+        },
+        "servicePrincipalObjectId": {
+            "metadata": {
+                "description": "This needs to be the object id of the service principal, rather than the app id."
+            },
+            "type": "string"
+        },
+        "workspaceRegion": {
+            "type": "string",
+            "metadata": {
+                "description": "Specify the region for your log analytics workspace"
+            }
+        },
+        "laWorkspaceRG": {
+            "type": "string",
+            "metadata": {
+                "description": "Specify the resource group of the log analytics workspace"
+            }
+        },
+        "laWorkspaceName": {
+            "type": "string",
+            "metadata": {
+                "description": "Specify the resource name of the log analytics workspace"
+            }
+        },
+        "vnetRG": {
+            "type": "string",
+            "metadata": {
+                "description": "Resource group of virtual network used for nodes and/or pods IP assignment."
+            }
+        },
+        "vnetName": {
+            "type": "string",
+            "metadata": {
+                "description": "Resource name of virtual network used for nodes and/or pods IP assignment."
+            }
+        },
+        "subnetName": {
+            "type": "string",
+            "metadata": {
+                "description": "Resource ID of virtual network subnet used for nodes and/or pods IP assignment."
+            }
+        },
+        "serviceCidr": {
+            "type": "string",
+            "metadata": {
+                "description": "A CIDR notation IP range from which to assign service cluster IPs."
+            }
+        },
+        "dnsServiceIP": {
+            "type": "string",
+            "metadata": {
+                "description": "Containers DNS server IP address."
+            }
+        },
+        "dockerBridgeCidr": {
+            "type": "string",
+            "metadata": {
+                "description": "A CIDR notation IP for Docker bridge."
+            }
+        },
+        "aadTenant": {
+            "type": "string",
+            "metadata": {
+                "description": "AAD Tenant ID."
+            }
+        },
+        "aadClientAppId": {
+            "type": "string",
+            "metadata": {
+                "description": "AAD Application ID of the principal used for the client."
+            }
+        },
+        "aadAppId": {
+            "type": "string",
+            "metadata": {
+                "description": "AAD Application ID representing the cluster."
+            }
+        },
+        "aadAppSecret": {
+            "type": "securestring",
+            "metadata": {
+                "description": "AAD Application ID representing the cluster."
+            }
+        }
+    },
+    "variables": {
+        "subnetId": "[resourceId(parameters('vnetRG'), 'Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('subnetName'))]",
+        "laWorkspaceId": "[resourceId(parameters('laWorkspaceRG'), 'Microsoft.OperationalInsights/workspaces', parameters('laWorkspaceName'))]"
+    },
+    "resources": [
+        {
+            "name": "[parameters('resourceName')]",
+            "type": "Microsoft.ContainerService/managedClusters",
+            "apiVersion": "2018-03-31",
+            "dependsOn": [
+                "[concat('Microsoft.Resources/deployments/', 'ClusterSubnetRoleAssignmentDeployment')]"
+            ],
+            "location": "[resourceGroup().location]",
+            "properties": {
+                "kubernetesVersion": "1.12.5",
+                "enableRBAC": true,
+                "dnsPrefix": "[parameters('dnsPrefix')]",
+                "addonProfiles": {
+                    "omsagent": {
+                        "enabled": true,
+                        "config": {
+                            "logAnalyticsWorkspaceResourceID": "[variables('laWorkspaceId')]"
+                        }
+                    }
+                },
+                "agentPoolProfiles": [
+                    {
+                        "name": "frontendpool",
+                        "osDiskSizeGB": 0,
+                        "count": "[parameters('agentCount')]",
+                        "vmSize": "[parameters('agentVMSize')]",
+                        "osType": "Linux",
+                        "storageProfile": "ManagedDisks",
+                        "vnetSubnetID": "[variables('subnetId')]"
+                    }
+                ],
+                "aadProfile": {
+                    "tenantID": "[parameters('aadTenant')]",
+                    "clientAppID": "[parameters('aadClientAppId')]",
+                    "serverAppID": "[parameters('aadAppId')]",
+                    "serverAppSecret": "[parameters('aadAppSecret')]"
+                },
+                "servicePrincipalProfile": {
+                    "clientId": "[parameters('servicePrincipalClientId')]",
+                    "Secret": "[parameters('servicePrincipalClientSecret')]"
+                },
+                "networkProfile": {
+                    "networkPlugin": "azure",
+                    "serviceCidr": "[parameters('serviceCidr')]",
+                    "dnsServiceIP": "[parameters('dnsServiceIP')]",
+                    "dockerBridgeCidr": "[parameters('dockerBridgeCidr')]"
+                }
+            },
+            "tags": {}
+        },
+        {
+            "type": "Microsoft.Resources/deployments",
+            "name": "SolutionDeployment",
+            "apiVersion": "2017-05-10",
+            "resourceGroup": "[parameters('laWorkspaceRG')]",
+            "subscriptionId": "[subscription().subscriptionId]",
+            "properties": {
+                "mode": "Incremental",
+                "template": {
+                    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {},
+                    "variables": {},
+                    "resources": [
+                        {
+                            "comments": "Log Analytics Workspace",
+                            "type": "Microsoft.OperationalInsights/workspaces",
+                            "name": "[parameters('laWorkspaceName')]",
+                            "apiVersion": "2015-11-01-preview",
+                            "location": "[parameters('workspaceRegion')]",
+                            "properties": {
+                                "sku": {
+                                    "name": "PerGB2018"
+                                },
+                                "retentionInDays": 30
+                            }
+                        },
+                        {
+                            "name": "[concat('ContainerInsights', '(', parameters('laWorkspaceName'), ')')]",
+                            "type": "Microsoft.OperationsManagement/solutions",
+                            "apiVersion": "2015-11-01-preview",
+                            "location": "[parameters('workspaceRegion')]",
+                            "dependsOn": [
+                                "[concat('Microsoft.OperationalInsights/workspaces/', parameters('laWorkspaceName'))]"
+                            ],
+                            "properties": {
+                                "workspaceResourceId": "[variables('laWorkspaceId')]"
+                            },
+                            "plan": {
+                                "name": "[concat('ContainerInsights', '(', parameters('laWorkspaceName'), ')')]",
+                                "product": "OMSGallery/ContainerInsights",
+                                "promotionCode": "",
+                                "publisher": "Microsoft"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "comments": "Grant the AKS Cluster identity Network Contributor role on the subnet.",
+            "type": "Microsoft.Resources/deployments",
+            "name": "ClusterSubnetRoleAssignmentDeployment",
+            "apiVersion": "2018-11-01",
+            "resourceGroup": "[parameters('vnetRG')]",
+            "subscriptionId": "[subscription().subscriptionId]",
+            "properties": {
+                "mode": "Incremental",
+                "template": {
+                    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {},
+                    "variables": {},
+                    "resources": [
+                        {
+                            "type": "Microsoft.Network/virtualNetworks/subnets/providers/roleAssignments",
+                            "apiVersion": "2017-09-01",
+                            "name": "[concat(parameters('vnetName'), '/', parameters('subnetName'), '/Microsoft.Authorization/', guid(variables('subnetId'), parameters('servicePrincipalObjectId'), 'Network Contributor'))]",
+                            "properties": {
+                                "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', '4d97b98b-1d4f-4787-a291-c67834d212e7')]",
+                                "principalId": "[parameters('servicePrincipalObjectId')]",
+                                "scope": "[variables('subnetId')]"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "outputs": {}
+}

@@ -1,0 +1,255 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "0.1.0.0",
+    "parameters": {
+        "vNetName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the virtual network."
+            }
+        },
+        "addressSpace": {
+            "type": "string",
+            "metadata": {
+                "description": "The IPv4 address space of the virtual network."
+            }
+        },
+        "crName": {
+            "type": "string",
+            "metadata": {
+                "description": "The name of the container registry."
+            }
+        },
+        "keyVaultName": {
+            "type": "string",
+            "metadata": {
+                "description": "The name of the KeyVault."
+            }
+        },
+        "keyVaultUser": {
+            "type": "string",
+            "metadata": {
+                "description": "The AAD object id of the user to grant admin permisions to the keyvault."
+            }
+        },
+        "servicePrincipalObjectId": {
+            "metadata": {
+                "description": "This needs to be the object id of the AKS service principal, rather than the app id."
+            },
+            "type": "string"
+        },
+        "servicePrincipalClientSecret": {
+            "metadata": {
+                "description": "The client secret for the AKS service principle."
+            },
+            "type": "securestring"
+        }
+    },
+    "variables": {
+        "location": "[resourceGroup().location]",
+        "CidrParts": "[split(parameters('addressSpace'), '/')]",
+        "AddressSpaceParts": "[split(variables('CidrParts')[0], '.')]",
+        "AddressPrefix24": "[concat(variables('AddressSpaceParts')[0], '.', variables('AddressSpaceParts')[1], '.', variables('AddressSpaceParts')[2], '.')]",
+        "Subnets": [
+            {
+                "name": "AKSPublic",
+                "NSG": "AKSPublic",
+                "prefix": "[concat(variables('AddressPrefix24'), '0/25')]"
+            },
+            {
+                "name": "AKSPrivate",
+                "NSG": "AKSPrivate",
+                "prefix": "[concat(variables('AddressPrefix24'), '128/25')]"
+            }
+        ]
+    },
+    "resources": [
+        {
+            "name": "AKSPublic",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "comments": "The network security group to allow HTTP and HTTPS traffic.",
+            "apiVersion": "2018-12-01",
+            "location": "[variables('location')]",
+            "properties": {
+                "securityRules": [
+                    {
+                        "name": "AllowHttp",
+                        "properties": {
+                            "priority": 100,
+                            "description": "Allow all inbound HTTP traffic.",
+                            "direction": "Inbound",
+                            "access": "Allow",
+                            "sourceAddressPrefix": "*",
+                            "sourcePortRange": "*",
+                            "destinationAddressPrefix": "VirtualNetwork",
+                            "destinationPortRange": "80",
+                            "protocol": "Tcp"
+                        }
+                    },
+                    {
+                        "name": "AllowHttps",
+                        "properties": {
+                            "priority": 110,
+                            "description": "Allow all inbound HTTPS traffic.",
+                            "direction": "Inbound",
+                            "access": "Allow",
+                            "sourceAddressPrefix": "*",
+                            "sourcePortRange": "*",
+                            "destinationAddressPrefix": "VirtualNetwork",
+                            "destinationPortRange": "443",
+                            "protocol": "Tcp"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "name": "AKSPrivate",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "comments": "The default network security group with only default rules.",
+            "apiVersion": "2018-12-01",
+            "location": "[variables('location')]",
+            "properties": {
+                "securityRules": []
+            }
+        },
+        {
+            "type": "Microsoft.Network/virtualNetworks",
+            "name": "[parameters('vNetName')]",
+            "location": "[variables('location')]",
+            "apiVersion": "2018-12-01",
+            "dependsOn": [
+                "Microsoft.Network/networkSecurityGroups/AKSPublic",
+                "Microsoft.Network/networkSecurityGroups/AKSPrivate"
+            ],
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "[parameters('addressSpace')]"
+                    ]
+                },
+                "copy": [{
+                    "name": "subnets",
+                    "count": "[length(variables('Subnets'))]",
+                    "input": {
+                        "name": "[variables('Subnets')[copyIndex('subnets')].name]",
+                        "properties": {
+                            "addressPrefix": "[variables('Subnets')[copyIndex('subnets')].prefix]",
+                            "networkSecurityGroup": {
+                                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('Subnets')[copyIndex('subnets')].NSG)]"
+                            },
+                            "serviceEndpoints": [],
+                            "delegations": []
+                        }
+                    }
+                }]
+            }
+        },
+        {
+            "comments": "Container Registry",
+            "type": "Microsoft.ContainerRegistry/registries",
+            "sku": {
+                "name": "Basic"
+            },
+            "name": "[parameters('crName')]",
+            "apiVersion": "2017-10-01",
+            "location": "[variables('location')]",
+            "tags": {},
+            "properties": {
+                "adminUserEnabled": false
+            }
+        },
+        {
+            "type": "Microsoft.ContainerRegistry/registries/providers/roleAssignments",
+            "apiVersion": "2017-09-01",
+            "name": "[concat(parameters('crName'), '/Microsoft.Authorization/', guid(resourceId('Microsoft.ContainerRegistry/registries', parameters('crName')), parameters('servicePrincipalObjectId'), 'AcrPull'))]",
+            "dependsOn": [
+                "[concat('Microsoft.ContainerRegistry/registries/', parameters('crName'))]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+                "principalId": "[parameters('servicePrincipalObjectId')]",
+                "scope": "[resourceId('Microsoft.ContainerRegistry/registries', parameters('crName'))]"
+            }
+        },
+        {
+            "type": "Microsoft.KeyVault/vaults",
+            "name": "[parameters('keyVaultName')]",
+            "apiVersion": "2018-02-14",
+            "location": "[variables('location')]",
+            "properties": {
+                "enabledForDeployment": false,
+                "enabledForTemplateDeployment": true,
+                "enabledForDiskEncryption": false,
+                "accessPolicies": [
+                    {
+                        "objectId": "[parameters('keyVaultUser')]",
+                        "tenantId": "[subscription().tenantId]",
+                        "permissions": {
+                            "keys": [
+                                "get",
+                                "list",
+                                "update",
+                                "create",
+                                "import",
+                                "delete",
+                                "recover",
+                                "backup",
+                                "restore"
+                            ],
+                            "secrets": [
+                                "get",
+                                "list",
+                                "set",
+                                "delete",
+                                "recover",
+                                "backup",
+                                "restore"
+                            ],
+                            "certificates": [
+                                "get",
+                                "list",
+                                "update",
+                                "create",
+                                "import",
+                                "delete",
+                                "recover",
+                                "managecontacts",
+                                "manageissuers",
+                                "getissuers",
+                                "listissuers",
+                                "setissuers",
+                                "deleteissuers"
+                            ]
+                        }
+                    }
+                ],
+                "tenantId": "[subscription().tenantId]",
+                "sku": {
+                    "name": "premium",
+                    "family": "A"
+                },
+                "networkAcls": {
+                    "defaultAction": "Allow",
+                    "bypass": "AzureServices",
+                    "virtualNetworkRules": [],
+                    "ipRules": []
+                }
+            },
+            "resources": [
+                {
+                    "name": "servicePrincipalClientSecret",
+                    "type": "secrets",
+                    "apiVersion": "2018-02-14",
+                    "dependsOn": [
+                        "[concat('Microsoft.KeyVault/vaults/', parameters('keyVaultName'))]"
+                    ],
+                    "properties": {
+                        "value": "[parameters('servicePrincipalClientSecret')]"
+                    }
+                }
+            ]
+        }
+    ],
+    "outputs": {}
+}
