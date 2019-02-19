@@ -1,0 +1,7 @@
+*params.json
+.vs
+.vscode
+*.csproj.user
+bin/
+obj/
+lib/
