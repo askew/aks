@@ -1,0 +1,73 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "resourceName": {
+            "value": ""
+        },
+        "dnsPrefix": {
+            "value": ""
+        },
+        "agentCount": {
+            "value": 1
+        },
+        "servicePrincipalClientId": {
+            "value": ""
+        },
+        "servicePrincipalClientSecret": {
+            "reference": {
+                "keyVault": {
+                    "id": "/subscriptions/<subscription-id>/resourceGroups/Core/providers/Microsoft.KeyVault/vaults/mykeyvault"
+                },
+                "secretName": "servicePrincipalClientSecret"
+            }
+        },
+        "servicePrincipalObjectId": {
+            "value": ""
+        },
+        "laWorkspaceRG": {
+            "value": ""
+        },
+        "laWorkspaceName": {
+            "value": ""
+        },
+        "workspaceRegion": {
+            "value": ""
+        },
+        "vnetRG": {
+            "value": ""
+        },
+        "vnetName": {
+            "value": "MyAKSVNet"
+        },
+        "subnetName": {
+            "value": "AKSPublic"
+        },
+        "serviceCidr": {
+            "value": "10.1.1.0/25"
+        },
+        "dnsServiceIP": {
+            "value": "10.1.1.5"
+        },
+        "dockerBridgeCidr": {
+            "value": "172.17.0.1/16"
+        },
+        "aadTenant": {
+            "value": "<AAD-Tenant>"
+        },
+        "aadClientAppId": {
+            "value": "<from aad/CreateAKSApplication.ps1>"
+        },
+        "aadAppId": {
+            "value": "<from aad/CreateAKSApplication.ps1>"
+        },
+        "aadAppSecret": {
+            "reference": {
+                "keyVault": {
+                    "id": "/subscriptions/<subscription-id>/resourceGroups/Core/providers/Microsoft.KeyVault/vaults/mykeyvault"
+                },
+                "secretName": "aadAppSecret"
+            }
+        }
+    }
+}
