@@ -56,6 +56,12 @@
             "metadata": {
                 "description": "The object id of the service principal used by the AKS cluster."
             }
+        },
+        "certKeyVaultId": {
+            "type": "string",
+            "metadata": {
+                "description": "The resource identifier of the secret for the SSL certificate in KeyVault."
+            }
         }
     },
     "variables": {
@@ -67,11 +73,18 @@
             "ruleSetType": "OWASP",
             "ruleSetVersion": "3.0"
         },
-        "webApplicationFirewallConfiguration": "[if(equals(parameters('sku'), 'WAF_v2'), variables('wafConfig'), json('null'))]",
         "msi": "AppGatewayIngressIdentity",
-        "msiId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('msi'))]"
+        "msiId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('msi'))]",
+        "agmsi": "[concat(parameters('applicationGatewayName'), '-msi')]"
     },
     "resources": [
+        {
+            "comments": "Managed Service Identity to be used for the AppGateway to access KeyVault",
+            "name": "[variables('agmsi')]",
+            "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+            "apiVersion": "2018-11-30",
+            "location": "[variables('location')]"
+        },
         {
             "comments": "Managed Service Identity to be used for the AppGateway/AKS ingress ",
             "name": "[variables('msi')]",
@@ -99,8 +112,15 @@
             "location": "[variables('location')]",
             "dependsOn": [
                 "[concat('Microsoft.Network/publicIPAddresses/', parameters('publicIpAddressName'))]",
-                "[concat('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('msi'))]"
+                "[concat('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('msi'))]",
+                "[concat('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('agmsi'))]"
             ],
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                    "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('agmsi'))]": {}
+                }
+            },
             "properties": {
                 "sku": {
                     "name": "[parameters('sku')]",
@@ -131,7 +151,7 @@
                     {
                         "name": "appGatewayFrontendPort",
                         "properties": {
-                            "Port": 80
+                            "Port": 443
                         }
                     }
                 ],
@@ -163,8 +183,10 @@
                             "FrontendPort": {
                                 "Id": "[resourceId('Microsoft.Network/applicationGateways/frontendPorts', parameters('applicationGatewayName'), 'appGatewayFrontendPort')]"
                             },
-                            "Protocol": "Http",
-                            "SslCertificate": null
+                            "Protocol": "Https",
+                            "SslCertificate": {
+                                "id":"[resourceId('Microsoft.Network/applicationGateways/sslCertificates', parameters('applicationGatewayName'), 'MyKeyVaultCert')]"
+                            }
                         }
                     }
                 ],
@@ -186,7 +208,15 @@
                     }
                 ],
                 "enableHttp2": "[parameters('enableHttp2')]",
-                "sslCertificates": []
+                "sslCertificates": [
+                    {
+                        "name": "MyKeyVaultCert",
+                        "properties": {
+                            "keyVaultSecretId": "[parameters('certKeyVaultId')]"
+                        }
+                    }
+                ],
+                "webApplicationFirewallConfiguration": "[if(equals(parameters('sku'), 'WAF_v2'), variables('wafConfig'), json('null'))]"
             }
         },
         {
