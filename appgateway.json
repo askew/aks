@@ -1,0 +1,247 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "applicationGatewayName": {
+            "type": "string",
+            "metadata": {
+                "description": ""
+            }
+        },
+        "sku": {
+            "type": "string",
+            "allowedValues": [
+                "Standard_v2",
+                "WAF_v2"
+            ],
+            "defaultValue": "Standard_v2"
+        },
+        "capacity": {
+            "type": "int",
+            "defaultValue": 2
+        },
+        "vnetRG": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the resource group the virtual network is defined in."
+            }
+        },
+        "vnetName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the virtual network."
+            }
+        },
+        "subnetName": {
+            "type": "string",
+            "metadata": {
+                "description": "The name of the subnet the Application Gateway will be deployed in."
+            }
+        },
+        "enableHttp2": {
+            "type": "bool",
+            "metadata": {
+                "description": "Whether or not to enable HTTP2 routing."
+            },
+            "defaultValue": false
+        },
+        "publicIpAddressName": {
+            "type": "string",
+            "metadata": {
+                "description": "The name of the public IP address."
+            }
+        },
+        "aksServicePrinipalId": {
+            "type": "string",
+            "metadata": {
+                "description": "The object id of the service principal used by the AKS cluster."
+            }
+        }
+    },
+    "variables": {
+        "location": "[resourceGroup().location]",
+        "subnetRef": "[resourceId(parameters('vnetRG'), 'Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('subnetName'))]",
+        "wafConfig": {
+            "enabled": true,
+            "firewallMode": "Detection",
+            "ruleSetType": "OWASP",
+            "ruleSetVersion": "3.0"
+        },
+        "webApplicationFirewallConfiguration": "[if(equals(parameters('sku'), 'WAF_v2'), variables('wafConfig'), json('null'))]",
+        "msi": "AppGatewayIngressIdentity",
+        "msiId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('msi'))]"
+    },
+    "resources": [
+        {
+            "comments": "Managed Service Identity to be used for the AppGateway/AKS ingress ",
+            "name": "[variables('msi')]",
+            "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+            "apiVersion": "2018-11-30",
+            "location": "[variables('location')]"
+        },
+        {
+            "comments": "IP address for the public endpoint of the application gateway.",
+            "name": "[parameters('publicIpAddressName')]",
+            "apiVersion": "2018-08-01",
+            "type": "Microsoft.Network/publicIPAddresses",
+            "location": "[variables('location')]",
+            "sku": {
+                "name": "Standard"
+            },
+            "properties": {
+                "publicIPAllocationMethod": "Static"
+            }
+        },
+        {
+            "name": "[parameters('applicationGatewayName')]",
+            "type": "Microsoft.Network/applicationGateways",
+            "apiVersion": "2018-10-01",
+            "location": "[variables('location')]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/publicIPAddresses/', parameters('publicIpAddressName'))]",
+                "[concat('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('msi'))]"
+            ],
+            "properties": {
+                "sku": {
+                    "name": "[parameters('sku')]",
+                    "tier": "[parameters('sku')]",
+                    "capacity": "[parameters('capacity')]"
+                },
+                "gatewayIPConfigurations": [
+                    {
+                        "name": "appGatewayIpConfig",
+                        "properties": {
+                            "subnet": {
+                                "id": "[variables('subnetRef')]"
+                            }
+                        }
+                    }
+                ],
+                "frontendIPConfigurations": [
+                    {
+                        "name": "appGatewayFrontendIP",
+                        "properties": {
+                            "PublicIPAddress": {
+                                "id": "[resourceId('Microsoft.Network/publicIPAddresses', parameters('publicIpAddressName'))]"
+                            }
+                        }
+                    }
+                ],
+                "frontendPorts": [
+                    {
+                        "name": "appGatewayFrontendPort",
+                        "properties": {
+                            "Port": 80
+                        }
+                    }
+                ],
+                "backendAddressPools": [
+                    {
+                        "name": "appGatewayBackendPool",
+                        "properties": {
+                            "BackendAddresses": []
+                        }
+                    }
+                ],
+                "backendHttpSettingsCollection": [
+                    {
+                        "name": "appGatewayBackendHttpSettings",
+                        "properties": {
+                            "Port": 80,
+                            "Protocol": "Http",
+                            "CookieBasedAffinity": "Disabled"
+                        }
+                    }
+                ],
+                "httpListeners": [
+                    {
+                        "name": "appGatewayHttpListener",
+                        "properties": {
+                            "FrontendIPConfiguration": {
+                                "Id": "[resourceId('Microsoft.Network/applicationGateways/frontendIPConfigurations', parameters('applicationGatewayName'),'appGatewayFrontendIP')]"
+                            },
+                            "FrontendPort": {
+                                "Id": "[resourceId('Microsoft.Network/applicationGateways/frontendPorts', parameters('applicationGatewayName'), 'appGatewayFrontendPort')]"
+                            },
+                            "Protocol": "Http",
+                            "SslCertificate": null
+                        }
+                    }
+                ],
+                "requestRoutingRules": [
+                    {
+                        "Name": "rule1",
+                        "properties": {
+                            "RuleType": "Basic",
+                            "httpListener": {
+                                "id": "[resourceId('Microsoft.Network/applicationGateways/httpListeners', parameters('applicationGatewayName'),'appGatewayHttpListener')]"
+                            },
+                            "backendAddressPool": {
+                                "id": "[resourceId('Microsoft.Network/applicationGateways/backendAddressPools', parameters('applicationGatewayName'),'appGatewayBackendPool')]"
+                            },
+                            "backendHttpSettings": {
+                                "id": "[resourceId('Microsoft.Network/applicationGateways/backendHttpSettingsCollection', parameters('applicationGatewayName'),'appGatewayBackendHttpSettings')]"
+                            }
+                        }
+                    }
+                ],
+                "enableHttp2": "[parameters('enableHttp2')]",
+                "sslCertificates": []
+            }
+        },
+        {
+            "comments": "Grant the Managed Identity 'Contributor' rights on the application gateway",
+            "type": "Microsoft.Network/applicationGateways/providers/roleAssignments",
+            "apiVersion": "2017-09-01",
+            "name": "[concat(parameters('applicationGatewayName'), '/Microsoft.Authorization/', guid(resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName')), variables('msiId'), 'Contributor'))]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/applicationGateways/', parameters('applicationGatewayName'))]",
+                "[concat('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('msi'))]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
+                "principalId": "[reference(variables('msiId'), '2018-11-30').principalId]",
+                "scope": "[resourceId('Microsoft.Network/applicationGateways', parameters('applicationGatewayName'))]"
+            }
+        },
+        {
+            "comments": "Grant the Managed Identity 'Reader' rights on the resource group with the application gateway",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2017-09-01",
+            "name": "[guid(resourceGroup().id, variables('msiId'), 'Reader')]",
+            "dependsOn": [
+                "[concat('Microsoft.Network/applicationGateways/', parameters('applicationGatewayName'))]",
+                "[concat('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('msi'))]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+                "principalId": "[reference(variables('msiId'), '2018-11-30').principalId]",
+                "scope": "[resourceGroup().id]"
+            }
+        },
+        {
+            "comments": "Grant the AKS SP 'Managed Identity Operator' rights on the MSI",
+            "type": "Microsoft.ManagedIdentity/userAssignedIdentities/providers/roleAssignments",
+            "apiVersion": "2017-09-01",
+            "name": "[concat(variables('msi'), '/Microsoft.Authorization/', guid(variables('msiId'), parameters('aksServicePrinipalId'), 'Managed Identity Operator'))]",
+            "dependsOn": [
+                "[concat('Microsoft.ManagedIdentity/userAssignedIdentities/', variables('msi'))]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Authorization/roleDefinitions/', 'f1a07417-d97a-45cb-824c-7a7467783830')]",
+                "principalId": "[parameters('aksServicePrinipalId')]",
+                "scope": "[variables('msiId')]",
+                "principalType": "ServicePrincipal"
+            }
+        }
+    ],
+    "outputs": {
+        "identity": {
+            "type": "object",
+            "value": {
+                "objectId": "[reference(variables('msiId'), '2018-11-30').principalId]",
+                "clientId": "[reference(variables('msiId'), '2018-11-30').clientId]"
+            }
+        }
+    }
+}
